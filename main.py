@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 import uvicorn
 from pydantic import BaseModel
 # 내가 만든 모듈들 불러오기
-from config import WORKSPACE_DIR, MODEL_ID, CompareMode
+from config import WORKSPACE_DIR, MODEL_ID, CompareMode, API_HOST, API_PORT
 from utils import auto_slice_financials
 from classes import UpstageDocumentParseClient, LLMClient, MetricSelector, LLMTableExtractor, GrowthReasoner
 from nodes import build_graph, render_report
