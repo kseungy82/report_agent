@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 # 환경 및 경로 설정
 # 작업 폴더 경로
