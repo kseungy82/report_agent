@@ -9,4 +9,3 @@ pypdf
 beautifulsoup4
 torch
 langgraph
-PyMuPDF
