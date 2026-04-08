@@ -7,6 +7,7 @@ from langgraph.graph import StateGraph, END
 from config import CompareMode
 from utils import PeriodKey, NormalizedFinancials, TopMove, unit_multiplier_to_million, sort_period_keys, pick_reference_index
 from classes import UpstageDocumentParseClient, MetricSelector, LLMTableExtractor, GrowthReasoner, LLMExtractionOutput, GrowthReasoningOutput
+import logging
 
 class FGState(TypedDict, total=False):
     pdf_paths: List[str]
