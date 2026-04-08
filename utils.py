@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel, Field
 from pypdf import PdfReader, PdfWriter
 from config import Unit, CompareMode, PeriodKey
+import logging
 
 #LLM이 기업 분석에 적합하다고 판단한 기업의 핵심 지표들
 class MetricSelectionOutput(BaseModel):
