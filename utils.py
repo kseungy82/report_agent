@@ -135,7 +135,7 @@ def auto_slice_financials(input_path, output_path):
     reader = PdfReader(input_path)
     writer = PdfWriter()
     target_pages = []
-    print(f"문서 스캔 중... (총 {len(reader.pages)}페이지)")
+    logging.info(f"문서 스캔 중... (총 {len(reader.pages)}페이지)")
     metric_keywords = [
         "매출", "매출액", "영업수익",
         "영업이익", "영업이익(손실)",
@@ -153,11 +153,11 @@ def auto_slice_financials(input_path, output_path):
         if "포괄손익계산서" in clean_text and "연결" not in clean_text:
             hit_count = sum(1 for k in metric_keywords if k in clean_text)
             if hit_count >= 2:
-                print(f"(별도)포괄손익계산서 페이지 발견: {i}")
+                logging.info(f"(별도)포괄손익계산서 페이지 발견: {i}")
                 target_pages.append(i)
   
     if not target_pages:
-        print("전체 페이지 사용")
+        logging.info("전체 페이지 사용")
         for i in range(len(reader.pages)):
             writer.add_page(reader.pages[i])
 
@@ -177,5 +177,5 @@ def auto_slice_financials(input_path, output_path):
     with open(output_path, "wb") as f:
         writer.write(f)
 
-    print(f"필터링 완료: {pages}")
+    logging.info(f"필터링 완료: {pages}")
     return output_path
