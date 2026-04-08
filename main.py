@@ -15,9 +15,7 @@ from classes import UpstageDocumentParseClient, LLMClient, MetricSelector, LLMTa
 from nodes import build_graph, render_report
 
 #로그 파일 설정
-os.chdir(WORKSPACE_DIR)
-current_path = os.getcwd()
-log_filename = os.path.join(current_path, f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+log_filename = os.path.join(WORKSPACE_DIR, f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 logging.basicConfig(
     level=logging.INFO,
