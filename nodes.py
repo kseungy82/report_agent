@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional, TypedDict
 from bs4 import BeautifulSoup
 from langgraph.graph import StateGraph, END
 from config import CompareMode
-from utils import PeriodKey, NormalizedFinancials, TopMove, unit_multiplier_to_million, sort_period_keys, pick_reference_index
-from classes import UpstageDocumentParseClient, MetricSelector, LLMTableExtractor, GrowthReasoner, LLMExtractionOutput, GrowthReasoningOutput
+from utils import PeriodKey, NormalizedFinancials, TopMove, unit_multiplier_to_million, sort_period_keys, pick_reference_index, LLMExtractionOutput, GrowthReasoningOutput
+from classes import UpstageDocumentParseClient, MetricSelector, LLMTableExtractor, GrowthReasoner
 import logging
 
 class FGState(TypedDict, total=False):
