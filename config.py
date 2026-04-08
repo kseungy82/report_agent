@@ -15,6 +15,11 @@ os.environ["UPSTAGE_API_KEY"] = UPSTAGE_API_KEY
 # 모델 설정
 MODEL_ID = "kakaocorp/kanana-1.5-2.1b-instruct-2505"
 
+#Types / Schemas
+Unit = Literal["원", "천원", "백만원", "천만원", "억원","UNKNOWN"]
+CompareMode = Literal["QoQ", "YoY","UNKNOWN"] #분기 대비/전년동기 대비
+PeriodKey = str  # "YYYYQn"
+
 # 재무 분석 지표 후보군
 CANDIDATE_METRICS = [
     "영업이익(손실)", "법인세비용차감전순이익(손실)","법인세비용(수익)","당기순이익(손실)",
