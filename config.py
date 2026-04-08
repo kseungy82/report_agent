@@ -1,7 +1,7 @@
 import os
 
 # 환경 및 경로 설정
-# 작업 폴더 경로 (본인의 환경에 맞게 수정)
+# 작업 폴더 경로
 WORKSPACE_DIR = '/Users/kimseungyeon1/Desktop/금융sllm/'
 
 # API 키 설정 
