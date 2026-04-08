@@ -15,6 +15,7 @@ from langgraph.graph import StateGraph, END
 from pypdf import PdfReader, PdfWriter
 from bs4 import BeautifulSoup
 from config import *
+
 #로그 파일 설정
 current_path = os.getcwd()
 log_filename = os.path.join(current_path, f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
