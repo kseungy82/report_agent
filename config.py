@@ -3,7 +3,7 @@ from typing import Literal
 
 # 환경 및 경로 설정
 # 작업 폴더 경로
-WORKSPACE_DIR = '/Users/kimseungyeon1/Desktop/금융sllm/'
+WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", os.path.dirname(os.path.abspath(__file__)))
 
 # API 키 설정 
 HUGGINGFACEHUB_API_TOKEN = "여기에_허깅페이스_토큰을_입력하세요"
