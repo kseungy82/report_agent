@@ -11,6 +11,31 @@ from utils import (
     GrowthReasoningInput, extract_financial_periods
 )
 
+class UpstageDocumentParseClient:
+    def __init__(self):
+        self.api_key = os.environ.get("UPSTAGE_API_KEY")
+        if not self.api_key:
+            raise ValueError("UPSTAGE_API_KEY is required.")
+        self.base_url = "https://api.upstage.ai/v1/document-digitization"
+
+    def parse(self, pdf_path: str, timeout: int = 600) -> Dict[str, Any]:
+        url = self.base_url
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        data = {
+            "model": "document-parse-260128",
+            "ocr": "auto",
+            "chart_recognition": "true",  # requests 폼 전송을 위해 문자열로 처리
+            "coordinates": "true",
+            "output_formats": '["html"]',
+            "base64_encoding": '["figure"]',
+        }
+
+        with open(pdf_path, "rb") as f:
+            files = {"document": f}
+            resp = requests.post(url, headers=headers, files=files, data=data, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
 class LLMClient:
     def __init__(self, model_id: str, use_cpu: bool=False):
         self.device = "cpu" if use_cpu else ("cuda" if torch.cuda.is_available() else "cpu")
