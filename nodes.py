@@ -82,8 +82,8 @@ def node_select_metrics(state: FGState, selector: MetricSelector) -> FGState:
     """Pass 1: 첫 번째 PDF(최신)를 기준으로 핵심 지표를 선택합니다."""
     bundles = list(state["doc_bundle_by_pdf"].values())
     if not bundles:
-      print("\n[Upstage 파싱 실패 상세 원인]")
-      print(state.get("warnings"))
+      logging.info("\n[Upstage 파싱 실패 상세 원인]")
+      logging.info(state.get("warnings"))
       raise ValueError("문서 번들이 없습니다.")
 
     selected_metrics = selector.run(bundles[0], CANDIDATE_METRICS)
