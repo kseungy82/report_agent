@@ -255,7 +255,6 @@ class GrowthReasoner:
             return GrowthReasoningOutput(
                 growth_trajectory=growth_traj,
                 key_changes=analysis_list,
-                kpi_summary=[], 
                 summary_table=perfect_markdown_table,
                 caveats=caveats
             )
@@ -265,7 +264,6 @@ class GrowthReasoner:
             return GrowthReasoningOutput(
                 growth_trajectory="AI 분석 텍스트 파싱에 실패하여 수치 요약만 제공합니다.",
                 key_changes=[f"{h} 변동이 확인됩니다." for h in analysis_hints],
-                kpi_summary=[],
                 summary_table=perfect_markdown_table,
                 caveats=["AI 응답 형식이 깨져 원본 수치로 대체되었습니다."]
             )
