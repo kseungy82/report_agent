@@ -9,3 +9,5 @@ pypdf
 beautifulsoup4
 torch
 langgraph
+fastapi
+uvicorn
