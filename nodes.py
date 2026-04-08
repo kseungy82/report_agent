@@ -4,7 +4,7 @@ import math
 from typing import Any, Dict, List, Optional, TypedDict
 from bs4 import BeautifulSoup
 from langgraph.graph import StateGraph, END
-from config import CompareMode
+from config import CompareMode, CANDIDATE_METRICS
 from utils import PeriodKey, NormalizedFinancials, TopMove, unit_multiplier_to_million, sort_period_keys, pick_reference_index, LLMExtractionOutput, GrowthReasoningOutput
 from classes import UpstageDocumentParseClient, MetricSelector, LLMTableExtractor, GrowthReasoner
 import logging
