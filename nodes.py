@@ -9,10 +9,18 @@ LangGraph 노드/파이프라인 구성 모음.
 import math
 import os
 import re
+import json
+import logging
+import threading
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
+import requests
+import torch
 from bs4 import BeautifulSoup
 from langgraph.graph import END, StateGraph
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from classes import (
     CANDIDATE_METRICS,
@@ -25,8 +33,9 @@ from classes import (
 )
 from utils import pick_reference_index, sort_period_keys, unit_multiplier_to_million
 
-# LLM/클라이언트 클래스는 report_agent 구현을 그대로 사용
-from report_agent import GrowthReasoner, LLMClient, LLMTableExtractor, MetricSelector, UpstageDocumentParseClient
+from config import settings
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "node_upstage_parse",
@@ -41,7 +50,172 @@ __all__ = [
     "MetricSelector",
     "LLMTableExtractor",
     "GrowthReasoner",
+    "analyze_pdf",
 ]
+
+
+class UpstageDocumentParseClient:
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or settings.upstage_api_key
+        if not self.api_key:
+            raise ValueError("UPSTAGE_API_KEY is required. Put it in environment or .env.")
+        self.base_url = "https://api.upstage.ai/v1/document-digitization"
+
+    def parse(self, pdf_path: str, timeout: int = 600) -> dict:
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        data = {
+            "model": "document-parse-260128",
+            "ocr": "auto",
+            "chart_recognition": "true",
+            "coordinates": "true",
+            "output_formats": '["html"]',
+            "base64_encoding": '["figure"]',
+        }
+        with open(pdf_path, "rb") as f:
+            files = {"document": f}
+            resp = requests.post(self.base_url, headers=headers, files=files, data=data, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
+
+
+class LLMClient:
+    def __init__(self, model_id: str, use_cpu: bool = False):
+        self.device = "cpu" if use_cpu else ("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info("%s 로딩 중... device=%s", model_id, self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        ).to(self.device)
+        self.model.eval()
+
+    def generate(self, system: str, user: str) -> str:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=1024,
+                do_sample=False,
+                repetition_penalty=1.15,
+                pad_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+
+        input_length = inputs["input_ids"].shape[1]
+        generated_tokens = outputs[0][input_length:]
+        content = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+        if "<|user|>" in content:
+            content = content.split("<|user|>")[0].strip()
+        if "<|assistant|>" in content:
+            content = content.split("<|assistant|>")[0].strip()
+        content = content.replace("```json", "").replace("```", "").strip()
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        return content[start:end] if start != -1 and end > start else content
+
+
+class MetricSelector:
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    def run(self, doc_bundle: dict, candidates: list[str]) -> list[str]:
+        from classes import MetricSelectionOutput
+
+        schema = MetricSelectionOutput.model_json_schema()
+        system = (
+            "너는 10년차 재무 분석 전문가야.\n"
+            "제공된 문서를 분석하여, 기업의 재무 건전성과 성장성을 가장 잘 보여주는 핵심 지표를 최소 5개 선정해.\n"
+            "조건:\n"
+            "1. '포괄손익계산서'에 적혀있는 지표명 그대로 추출해.\n"
+            "2. 다음 [후보 지표 목록]에 포함된 지표만 선택해.\n"
+            f"[후보 지표 목록]: {candidates}\n"
+            "3. 출력은 반드시 제공된 스키마와 일치하는 JSON만 출력해.\n"
+        )
+        user = f"DOCUMENT_BUNDLE:\n{json.dumps(doc_bundle, ensure_ascii=False, indent=2)}\n\nSCHEMA:\n{json.dumps(schema, ensure_ascii=False)}"
+        raw = self.llm.generate(system=system, user=user)
+        return MetricSelectionOutput(**json.loads(raw)).selected_metrics
+
+
+class LLMTableExtractor:
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    def run(self, doc_bundle: dict, compare: str, selected_metrics: list[str]) -> LLMExtractionOutput:
+        from classes import LLMExtractionOutput
+        from utils import extract_financial_periods
+
+        schema = LLMExtractionOutput.model_json_schema()
+        now_date, now_key, now_term, ref_date, ref_key, ref_term = extract_financial_periods(doc_bundle)
+        system = f"""
+너는 제공된 문서에서 재무제표 핵심 수치만 선별해 정확한 수치를 추출하는 수석 재무 분석가다.
+[분석 대상 기간]
+- "now_period_key": "{now_key}"
+- "now_period": "{now_date}" (열 힌트: "{now_term}")
+- "ref_period_key": "{ref_key}"
+- "ref_period": "{ref_date}" (열 힌트: "{ref_term}")
+[절대 원칙]
+- 지표명/수치 모두 원본 100% 일치.
+- 반드시 {selected_metrics}에 포함된 지표들만 추출.
+- 모든 수치는 문자열로 출력.
+- JSON 외 텍스트 출력 금지.
+"""
+        user = (
+            f"DOCUMENT_BUNDLE:\n{json.dumps(doc_bundle, ensure_ascii=False, indent=2)}\n\n"
+            f"SCHEMA:\n{json.dumps(schema, ensure_ascii=False)}\n"
+            f"COMPARE_HINT: {compare}"
+        )
+        raw = self.llm.generate(system=system, user=user)
+        return LLMExtractionOutput(**json.loads(raw))
+
+
+class GrowthReasoner:
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    def run(self, inp: GrowthReasoningInput) -> GrowthReasoningOutput:
+        now_p = inp.now_period
+        ref_p = inp.ref_period or "UNKNOWN"
+        unit = inp.unit
+        table_rows = [
+            f"| 지표 | {ref_p} ({unit}) | {now_p} ({unit}) | 변동액 ({unit}) | 증감률 (%) |",
+            "|---|---|---|---|---|",
+        ]
+        analysis_hints: list[str] = []
+        for m in inp.top_moves:
+            pct_str = f"{m.delta_pct * 100:.1f}%" if m.delta_pct is not None else "n/a"
+            table_rows.append(f"| {m.metric} | {m.ref:,.2f} | {m.now:,.2f} | {m.delta:,.2f} | {pct_str} |")
+            status = "흑자전환" if m.flip_flag and m.now > 0 else ("적자/악화" if m.delta < 0 else "성장/개선")
+            analysis_hints.append(f"- {m.metric}: {m.ref:,.0f} -> {m.now:,.0f} (변동: {m.delta:,.0f}, {pct_str}) [{status}]")
+        perfect_markdown_table = "\n".join(table_rows)
+        system = (
+            "너는 기업 실적을 분석하는 10년차 재무 분석 전문가야. 모든 답변은 한국어로 작성해.\n"
+            "아래 양식에 맞춰 텍스트로만 답변해. 절대 JSON({ })이나 표를 쓰지 마.\n\n"
+            "[총평]\n(총평)\n\n"
+            "[지표분석]\n- [지표명]: (분석)\n\n"
+            "[특이사항]\n- (주의사항)\n"
+        )
+        raw = self.llm.generate(system=system, user="실적 데이터:\n" + "\n".join(analysis_hints)).strip()
+        growth_traj = raw
+        key_changes: list[str] = []
+        caveats: list[str] = []
+        if "[총평]" in raw:
+            growth_traj = raw.split("[총평]", 1)[1].split("[지표분석]", 1)[0].strip()
+        if "[지표분석]" in raw:
+            part = raw.split("[지표분석]", 1)[1].split("[특이사항]", 1)[0].strip()
+            key_changes = [ln.strip().lstrip("-").strip() for ln in part.splitlines() if ln.strip()]
+        if "[특이사항]" in raw:
+            part = raw.split("[특이사항]", 1)[1].strip()
+            caveats = [ln.strip().lstrip("-").strip() for ln in part.splitlines() if ln.strip()]
+        return GrowthReasoningOutput(
+            growth_trajectory=growth_traj or "분석 요약 생성 실패",
+            key_changes=key_changes or [h for h in analysis_hints],
+            caveats=caveats,
+            summary_table=perfect_markdown_table,
+        )
 
 
 def node_upstage_parse(state: FGState, upstage: UpstageDocumentParseClient) -> FGState:
@@ -301,4 +475,58 @@ def run_pipeline(
     )
     final_state = app.invoke({"pdf_paths": pdf_paths, "compare": compare, "top_k": top_k, "warnings": []})
     return final_state, render_report(final_state)
+
+
+@dataclass
+class ModelBundle:
+    llm: LLMClient
+    upstage: UpstageDocumentParseClient
+
+
+_bundle_lock = threading.Lock()
+_bundle: ModelBundle | None = None
+
+
+def get_model_bundle() -> ModelBundle:
+    global _bundle
+    if _bundle is not None:
+        return _bundle
+    with _bundle_lock:
+        if _bundle is not None:
+            return _bundle
+        if settings.huggingfacehub_api_token:
+            os.environ["HUGGINGFACEHUB_API_TOKEN"] = settings.huggingfacehub_api_token
+        upstage = UpstageDocumentParseClient()
+        llm = LLMClient(model_id=settings.kanana_model_id)
+        _bundle = ModelBundle(llm=llm, upstage=upstage)
+        return _bundle
+
+
+def analyze_pdf(
+    pdf_path: str,
+    compare: str = "YoY",
+    top_k: int = 5,
+    use_reasoning: bool = True,
+    slice_financial_statement: bool = True,
+    work_dir: str | None = None,
+):
+    from utils import auto_slice_financials
+
+    bundle = get_model_bundle()
+    effective_pdf = pdf_path
+    if slice_financial_statement:
+        base_dir = work_dir or os.path.dirname(os.path.abspath(pdf_path))
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        sliced = os.path.join(base_dir, f"temp_sliced_finance_{ts}.pdf")
+        effective_pdf = auto_slice_financials(pdf_path, sliced)
+
+    state, text = run_pipeline(
+        pdf_paths=[effective_pdf],
+        llm=bundle.llm,
+        upstage=bundle.upstage,
+        compare=compare,
+        top_k=top_k,
+        use_reasoning=use_reasoning,
+    )
+    return state, text, effective_pdf
 
