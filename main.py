@@ -10,7 +10,7 @@ from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from report_agent import analyze_pdf
+from nodes import analyze_pdf
 from router import RouterAgent
 
 
