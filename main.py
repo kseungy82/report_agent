@@ -9,6 +9,7 @@ from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
+from config import settings
 from nodes import analyze_pdf
 from router import RouterAgent
 
@@ -26,7 +27,11 @@ def _configure_request_file_logging(base_dir: str) -> str:
     """
     노트북과 동일한 방식으로 요청별 로그 파일을 생성합니다.
     """
-    log_filename = os.path.join(base_dir, f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    log_dir = settings.log_dir
+    if not os.path.isabs(log_dir):
+        log_dir = os.path.join(base_dir, log_dir)
+    os.makedirs(log_dir, exist_ok=True)
+    log_filename = os.path.join(log_dir, f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -44,7 +49,9 @@ def _persist_uploaded_pdf(upload, base_dir: str) -> str:
     """
     업로드된 PDF를 임시폴더가 아닌 고정 경로에 저장합니다.
     """
-    runtime_dir = os.path.join(base_dir, "runtime_files")
+    runtime_dir = settings.runtime_dir
+    if not os.path.isabs(runtime_dir):
+        runtime_dir = os.path.join(base_dir, runtime_dir)
     os.makedirs(runtime_dir, exist_ok=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -155,4 +162,10 @@ async def route(
     except Exception as e:
         logger.exception("route failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=settings.app_port, reload=False)
 
