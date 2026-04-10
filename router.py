@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
-from agents.report_agent import analyze_pdf
+from report_agent import analyze_pdf
 
 
 RouteName = Literal["report", "unsupported"]
