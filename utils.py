@@ -6,7 +6,7 @@ from __future__ import annotations
 현재는 `agents/report_agent.py`의 검증된 구현을 재사용(재export)합니다.
 """
 
-from agents.report_agent import (
+from report_agent import (
     auto_slice_financials,
     extract_financial_periods,
     get_quarter,
