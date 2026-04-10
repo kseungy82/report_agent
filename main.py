@@ -10,8 +10,8 @@ from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from agents.report_agent import analyze_pdf
-from agents.router import RouterAgent
+from report_agent import analyze_pdf
+from router import RouterAgent
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
