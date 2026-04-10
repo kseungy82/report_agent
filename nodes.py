@@ -1,11 +1,4 @@
 from __future__ import annotations
-
-"""
-LangGraph 노드/파이프라인 구성 모음.
-
-핵심 노드 로직을 분리한 파일입니다.
-"""
-
 import math
 import os
 import re
@@ -71,11 +64,26 @@ class UpstageDocumentParseClient:
             "output_formats": '["html"]',
             "base64_encoding": '["figure"]',
         }
+        logger.info("[Upstage] parse start: file=%s timeout=%ss", os.path.basename(pdf_path), timeout)
+        started_at = datetime.now()
         with open(pdf_path, "rb") as f:
             files = {"document": f}
-            resp = requests.post(self.base_url, headers=headers, files=files, data=data, timeout=timeout)
-            resp.raise_for_status()
-            return resp.json()
+            try:
+                resp = requests.post(self.base_url, headers=headers, files=files, data=data, timeout=timeout)
+                elapsed = (datetime.now() - started_at).total_seconds()
+                logger.info("[Upstage] parse response: status=%s elapsed=%.1fs", resp.status_code, elapsed)
+                resp.raise_for_status()
+                payload = resp.json()
+                logger.info("[Upstage] parse success: keys=%s", list(payload.keys()))
+                return payload
+            except requests.Timeout:
+                elapsed = (datetime.now() - started_at).total_seconds()
+                logger.exception("[Upstage] parse timeout after %.1fs", elapsed)
+                raise
+            except requests.RequestException:
+                elapsed = (datetime.now() - started_at).total_seconds()
+                logger.exception("[Upstage] parse request failed after %.1fs", elapsed)
+                raise
 
 
 class LLMClient:
@@ -224,8 +232,10 @@ def node_upstage_parse(state: FGState, upstage: UpstageDocumentParseClient) -> F
 
     for path in state["pdf_paths"]:
         try:
+            logger.info("[Pipeline] upstage_parse begin: %s", path)
             doc = upstage.parse(path)
             elements = doc.get("elements") or []
+            logger.info("[Pipeline] upstage_parse elements: count=%s", len(elements))
             all_htmls = []
             all_texts = []
 
@@ -254,32 +264,54 @@ def node_upstage_parse(state: FGState, upstage: UpstageDocumentParseClient) -> F
                 "texts": all_texts,
                 "tables": all_htmls,
             }
+            logger.info(
+                "[Pipeline] upstage_parse done: file=%s texts=%s tables=%s",
+                os.path.basename(path),
+                len(all_texts),
+                len(all_htmls),
+            )
         except Exception as e:
             warnings.append(f"[{os.path.basename(path)}] Upstage 실패: {e}")
+            logger.exception("[Pipeline] upstage_parse failed: %s", os.path.basename(path))
 
     return {**state, "doc_bundle_by_pdf": doc_bundle_by_pdf, "warnings": warnings}
 
 
 def node_select_metrics(state: FGState, selector: MetricSelector) -> FGState:
+    started_at = datetime.now()
+    logger.info("[Pipeline] select_metrics begin")
     bundles = list(state["doc_bundle_by_pdf"].values())
     if not bundles:
         raise ValueError(f"문서 번들이 없습니다. warnings={state.get('warnings')}")
     selected_metrics = selector.run(bundles[0], CANDIDATE_METRICS)
+    elapsed = (datetime.now() - started_at).total_seconds()
+    logger.info("[Pipeline] select_metrics done: count=%s elapsed=%.1fs", len(selected_metrics), elapsed)
     return {**state, "selected_metrics": selected_metrics}
 
 
 def node_llm_extract(state: FGState, extractor: LLMTableExtractor) -> FGState:
+    started_at = datetime.now()
+    logger.info("[Pipeline] llm_extract begin: pdf_count=%s", len(state["doc_bundle_by_pdf"]))
     warnings = list(state.get("warnings") or [])
     llm_extraction_by_pdf: dict[str, LLMExtractionOutput] = {}
     for path, bundle in state["doc_bundle_by_pdf"].items():
         try:
+            one_started = datetime.now()
+            logger.info("[Pipeline] llm_extract per-pdf begin: %s", os.path.basename(path))
             llm_extraction_by_pdf[path] = extractor.run(bundle, state["compare"], state["selected_metrics"])
+            one_elapsed = (datetime.now() - one_started).total_seconds()
+            logger.info("[Pipeline] llm_extract per-pdf done: %s elapsed=%.1fs", os.path.basename(path), one_elapsed)
         except Exception as e:
             warnings.append(f"[{os.path.basename(path)}] LLM 추출 실패: {e}")
+            logger.exception("[Pipeline] llm_extract per-pdf failed: %s", os.path.basename(path))
+    elapsed = (datetime.now() - started_at).total_seconds()
+    logger.info("[Pipeline] llm_extract done: success=%s elapsed=%.1fs", len(llm_extraction_by_pdf), elapsed)
     return {**state, "llm_extraction_by_pdf": llm_extraction_by_pdf, "warnings": warnings}
 
 
 def node_merge_and_normalize(state: FGState) -> FGState:
+    started_at = datetime.now()
+    logger.info("[Pipeline] merge_normalize begin")
     warnings = list(state.get("warnings") or [])
     merged_data: dict[str, dict[str, float]] = {}
     unit_raw = "UNKNOWN"
@@ -329,10 +361,14 @@ def node_merge_and_normalize(state: FGState) -> FGState:
         pl_series[m_strip] = [merged_data.get(pk, {}).get(m_strip, math.nan) for pk in periods]
 
     fin = NormalizedFinancials(unit="백만원", periods=periods, pl=pl_series)
+    elapsed = (datetime.now() - started_at).total_seconds()
+    logger.info("[Pipeline] merge_normalize done: periods=%s metrics=%s elapsed=%.1fs", len(periods), len(pl_series), elapsed)
     return {**state, "fin": fin, "warnings": warnings}
 
 
 def node_compute_moves(state: FGState) -> FGState:
+    started_at = datetime.now()
+    logger.info("[Pipeline] compute_moves begin")
     fin = state["fin"]
     warnings = list(state.get("warnings") or [])
 
@@ -374,12 +410,18 @@ def node_compute_moves(state: FGState) -> FGState:
             )
         top_moves.sort(key=lambda x: (abs(x.delta_pct or 0.0), abs(x.delta)), reverse=True)
 
-    return {**state, "now_period": now_p, "ref_period": ref_p, "ref_found": ref_idx is not None, "top_moves": top_moves[: state["top_k"]]}
+    result = {**state, "now_period": now_p, "ref_period": ref_p, "ref_found": ref_idx is not None, "top_moves": top_moves[: state["top_k"]]}
+    elapsed = (datetime.now() - started_at).total_seconds()
+    logger.info("[Pipeline] compute_moves done: top_moves=%s elapsed=%.1fs", len(result["top_moves"]), elapsed)
+    return result
 
 
 def node_optional_reasoning(state: FGState, reasoner: Optional[GrowthReasoner]) -> FGState:
     if not reasoner:
+        logger.info("[Pipeline] optional_reasoning skipped")
         return state
+    started_at = datetime.now()
+    logger.info("[Pipeline] optional_reasoning begin")
     inp = GrowthReasoningInput(
         unit=state["fin"].unit,
         periods=state["fin"].periods,
@@ -390,10 +432,14 @@ def node_optional_reasoning(state: FGState, reasoner: Optional[GrowthReasoner]) 
         ref_period=state.get("ref_period"),
     )
     try:
-        return {**state, "llm_reasoning": reasoner.run(inp)}
+        out = {**state, "llm_reasoning": reasoner.run(inp)}
+        elapsed = (datetime.now() - started_at).total_seconds()
+        logger.info("[Pipeline] optional_reasoning done elapsed=%.1fs", elapsed)
+        return out
     except Exception as e:
         warnings = list(state.get("warnings") or [])
         warnings.append(f"Reasoning 실패: {e}")
+        logger.exception("[Pipeline] optional_reasoning failed")
         return {**state, "llm_reasoning": None, "warnings": warnings}
 
 
