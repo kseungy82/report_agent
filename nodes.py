@@ -26,7 +26,7 @@ from classes import (
 from utils import pick_reference_index, sort_period_keys, unit_multiplier_to_million
 
 # LLM/클라이언트 클래스는 report_agent 구현을 그대로 사용
-from agents.report_agent import GrowthReasoner, LLMClient, LLMTableExtractor, MetricSelector, UpstageDocumentParseClient
+from report_agent import GrowthReasoner, LLMClient, LLMTableExtractor, MetricSelector, UpstageDocumentParseClient
 
 __all__ = [
     "node_upstage_parse",
