@@ -1,13 +1,22 @@
+pydantic>=2.6
+requests>=2.31
+python-dotenv>=1.0
+beautifulsoup4>=4.12
+pypdf>=4.0
+PyMuPDF
+
+# graph orchestration
+langgraph>=0.2
+
+# local LLM
+torch
 transformers==4.52.4
 tokenizers==0.21.1
 accelerate>=0.30.0
 safetensors>=0.4.3
 huggingface_hub<1.0
-pydantic
-requests
-pypdf
-beautifulsoup4
-torch
-langgraph
-fastapi
-uvicorn
+
+# api server
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
