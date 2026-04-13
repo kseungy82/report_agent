@@ -222,7 +222,7 @@ class GrowthReasoner:
 
     def run(self, inp: GrowthReasoningInput) -> GrowthReasoningOutput:
         now_p = inp.now_period
-        ref_p = inp.ref_period or "UNKNOWN"
+        ref_p = inp.ref_period 
         unit = inp.unit
         table_rows = [
             f"| 지표 | {ref_p} ({unit}) | {now_p} ({unit}) | 변동액 ({unit}) | 증감률 (%) |",
