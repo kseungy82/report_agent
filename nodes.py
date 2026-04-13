@@ -75,12 +75,14 @@ class UpstageDocumentParseClient:
 
 
 class LLMClient:
-    def __init__(self, model_id: str, use_cpu: bool=False):
+    def __init__(self, model_id: str, model_path: str | None = None, use_cpu: bool = False):
+        # model_path가 있으면 로컬 경로 사용, 없으면 model_id로 HuggingFace에서 다운로드
+        load_target = model_path if model_path else model_id
         self.device = "cpu" if use_cpu else ("cuda" if torch.cuda.is_available() else "cpu")
-        logging.info(f"{model_id} 로딩 중... device={self.device}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        logging.info(f"{load_target} 로딩 중... device={self.device}")
+        self.tokenizer = AutoTokenizer.from_pretrained(load_target, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_id,
+            load_target,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True
         ).to(self.device)
