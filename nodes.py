@@ -7,7 +7,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 import requests
 import torch
@@ -23,6 +23,7 @@ from classes import (
     LLMExtractionOutput,
     NormalizedFinancials,
     TopMove,
+    CompareMode,
 )
 from utils import sort_period_keys, pick_reference_index, unit_multiplier_to_million, get_quarter, extract_financial_periods, auto_slice_financials
 from config import settings
@@ -173,7 +174,7 @@ class LLMTableExtractor:
 [분석 대상 기간]
 아래 4개의 Key는 반드시 아래 지정해준 값으로 JSON에 넣어.
 - 'now_period_key': '{now_key}'
-- 'now_period': '{now_date}' (표에서 데이터를 찾을 때 참고할 열 이름표: {now_term}')
+- 'now_period': '{now_date}' (표에서 데이터를 찾을 때 참고할 열 이름표: '{now_term}')
 - 'ref_period_key': '{ref_key}'
 - 'ref_period": '{ref_date}' (표에서 데이터를 찾을 때 참고할 열 이름표: '{ref_term}')
 
