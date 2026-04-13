@@ -629,7 +629,10 @@ def get_model_bundle() -> ModelBundle:
         if settings.huggingfacehub_api_token:
             os.environ["HUGGINGFACEHUB_API_TOKEN"] = settings.huggingfacehub_api_token
         upstage = UpstageDocumentParseClient()
-        llm = LLMClient(model_id=settings.kanana_model_id)
+        llm = LLMClient(
+            model_id=settings.kanana_model_id,
+            model_path=settings.kanana_model_path 
+        )
         _bundle = ModelBundle(llm=llm, upstage=upstage)
         return _bundle
 
