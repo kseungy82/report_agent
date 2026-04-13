@@ -149,6 +149,7 @@ class MetricSelector:
 
 
 class LLMTableExtractor:
+    """Pass 2: Pass 1에서 확정된 지표에 대해서만 값을 추출합니다."""
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
@@ -242,44 +243,77 @@ class GrowthReasoner:
             "\n[특이사항]\n"
             "- (모든 지표 고려하여 우려되는 점이나 모니터링이 필요한 점을 금융전문가 말투로 작성. 단, 추측 금지, 오직 사실에 근거해 작성.)"
         )
-        raw = self.llm.generate(system=system, user="실적 데이터:\n" + "\n".join(analysis_hints)).strip()
-        growth_traj = raw
-        key_changes: list[str] = []
-        caveats: list[str] = []
-        if "[총평]" in raw:
-            growth_traj = raw.split("[총평]", 1)[1].split("[지표분석]", 1)[0].strip()
-        if "[지표분석]" in raw:
-            part = raw.split("[지표분석]", 1)[1].split("[특이사항]", 1)[0].strip()
-            key_changes = [ln.strip().lstrip("-").strip() for ln in part.splitlines() if ln.strip()]
-        if "[특이사항]" in raw:
-            part = raw.split("[특이사항]", 1)[1].strip()
-            caveats = [ln.strip().lstrip("-").strip() for ln in part.splitlines() if ln.strip()]
-        return GrowthReasoningOutput(
-            growth_trajectory=growth_traj or "분석 요약 생성 실패",
-            key_changes=key_changes or [h for h in analysis_hints],
-            caveats=caveats,
-            summary_table=perfect_markdown_table,
-        )
+        user_content = f"실적 데이터:\n" + "\n".join(analysis_hints)
+        raw = self.llm.generate(system=system, user=user_content)
 
+
+        try:
+            raw_text = raw.strip()
+            if "```" in raw_text:
+                raw_text = re.sub(r'```[a-zA-Z]*\n', '', raw_text)
+                raw_text = raw_text.replace('```', '').strip()
+
+            # [총평] 파싱
+            growth_traj = "분석 요약 생성 실패"
+            if "[총평]" in raw_text:
+                traj_match = re.split(r'\[지표분석\]|\[특이사항\]', raw_text.split("[총평]")[1])[0]
+                growth_traj = traj_match.strip()
+
+            # [지표분석] 파싱
+            analysis_list = []
+            if "[지표분석]" in raw_text:
+                ana_match = re.split(r'\[특이사항\]|\[총평\]', raw_text.split("[지표분석]")[1])[0]
+                lines = ana_match.strip().split('\n')
+                analysis_list = [line.strip().lstrip('-').lstrip('*').strip() for line in lines if line.strip()]
+
+            if not analysis_list:
+                analysis_list = [f"{h} 변동이 확인되었습니다." for h in analysis_hints]
+
+            # [특이사항] 파싱
+            caveats = []
+            if "[특이사항]" in raw_text:
+                cav_match = re.split(r'\[총평\]|\[지표분석\]', raw_text.split("[특이사항]")[1])[0]
+                lines = cav_match.strip().split('\n')
+                caveats = [line.strip().lstrip('-').lstrip('*').strip() for line in lines if line.strip()]
+
+            return GrowthReasoningOutput(
+                growth_trajectory=growth_traj,
+                key_changes=analysis_list,
+                summary_table=perfect_markdown_table,
+                caveats=caveats
+            )
+
+        except Exception as e:
+            logging.info(f"[GrowthReasoner] 텍스트 파싱 에러 발생: {e}")
+            return GrowthReasoningOutput(
+                growth_trajectory="AI 분석 텍스트 파싱에 실패하여 수치 요약만 제공합니다.",
+                key_changes=[f"{h} 변동이 확인됩니다." for h in analysis_hints],
+                summary_table=perfect_markdown_table,
+                caveats=["AI 응답 형식이 깨져 원본 수치로 대체되었습니다."]
+            )
 
 def node_upstage_parse(state: FGState, upstage: UpstageDocumentParseClient) -> FGState:
     warnings = list(state.get("warnings") or [])
-    doc_bundle_by_pdf: dict[str, dict] = {}
+    doc_bundle_by_pdf = {}
 
     for path in state["pdf_paths"]:
         try:
-            logger.info("[Pipeline] upstage_parse begin: %s", path)
             doc = upstage.parse(path)
             elements = doc.get("elements") or []
-            logger.info("[Pipeline] upstage_parse elements: count=%s", len(elements))
-            all_htmls = []
-            all_texts = []
 
-            for el in elements:
+            all_htmls = []
+            all_texts = []  # 표 외의 모든 텍스트 정보를 담을 바구니
+
+            for i, el in enumerate(elements):
                 content = el.get("content", {})
+                category = el.get("category", "") # 요소의 종류 (text, table, heading 등)
+
+                # 표(table)인 경우: HTML 정제 후 저장
                 if "html" in content:
                     raw_html = content["html"]
                     soup = BeautifulSoup(raw_html, "html.parser")
+
+                    # '누적' 열 삭제 로직 
                     for tr in soup.find_all("tr"):
                         cells = tr.find_all(["td", "th"])
                         if len(cells) >= 5:
@@ -290,38 +324,38 @@ def node_upstage_parse(state: FGState, upstage: UpstageDocumentParseClient) -> F
                             if "누적" in text_check:
                                 cells[3].extract()
                                 cells[1].extract()
+
                     safe_html = str(soup)
+                    # 모든 표를 저장하되, 너무 길면 자름
                     all_htmls.append({"html": safe_html.strip()[:12000]})
+
+                # 표가 아닌 모든 텍스트 요소(text, heading, caption 등) 수집
                 elif "text" in content:
                     all_texts.append(content["text"].strip())
 
+            # 수집된 모든 데이터를 번들에 담기
             doc_bundle_by_pdf[path] = {
                 "file": os.path.basename(path),
-                "texts": all_texts,
-                "tables": all_htmls,
+                "texts": all_texts,  
+                "tables": all_htmls
             }
-            logger.info(
-                "[Pipeline] upstage_parse done: file=%s texts=%s tables=%s",
-                os.path.basename(path),
-                len(all_texts),
-                len(all_htmls),
-            )
+
         except Exception as e:
             warnings.append(f"[{os.path.basename(path)}] Upstage 실패: {e}")
-            logger.exception("[Pipeline] upstage_parse failed: %s", os.path.basename(path))
 
     return {**state, "doc_bundle_by_pdf": doc_bundle_by_pdf, "warnings": warnings}
 
 
+
 def node_select_metrics(state: FGState, selector: MetricSelector) -> FGState:
-    started_at = datetime.now()
-    logger.info("[Pipeline] select_metrics begin")
+    """Pass 1: 첫 번째 PDF(최신)를 기준으로 핵심 지표를 선택합니다."""
     bundles = list(state["doc_bundle_by_pdf"].values())
     if not bundles:
-        raise ValueError(f"문서 번들이 없습니다. warnings={state.get('warnings')}")
+      logging.info("\n[Upstage 파싱 실패 상세 원인]")
+      logging.info(state.get("warnings"))
+      raise ValueError("문서 번들이 없습니다.")
+
     selected_metrics = selector.run(bundles[0], CANDIDATE_METRICS)
-    elapsed = (datetime.now() - started_at).total_seconds()
-    logger.info("[Pipeline] select_metrics done: count=%s elapsed=%.1fs", len(selected_metrics), elapsed)
     return {**state, "selected_metrics": selected_metrics}
 
 
@@ -344,112 +378,114 @@ def node_llm_extract(state: FGState, extractor: LLMTableExtractor) -> FGState:
     logger.info("[Pipeline] llm_extract done: success=%s elapsed=%.1fs", len(llm_extraction_by_pdf), elapsed)
     return {**state, "llm_extraction_by_pdf": llm_extraction_by_pdf, "warnings": warnings}
 
-
 def node_merge_and_normalize(state: FGState) -> FGState:
-    started_at = datetime.now()
-    logger.info("[Pipeline] merge_normalize begin")
     warnings = list(state.get("warnings") or [])
-    merged_data: dict[str, dict[str, float]] = {}
+    merged_data: Dict[PeriodKey, Dict[str, float]] = {}
     unit_raw = "UNKNOWN"
 
-    for ext in state["llm_extraction_by_pdf"].values():
+    # 메타 정보 수집
+    for _, ext in state["llm_extraction_by_pdf"].items():
         if unit_raw == "UNKNOWN" and ext.unit_raw != "UNKNOWN":
             unit_raw = ext.unit_raw
 
     unit_raw = str(unit_raw).strip().replace("(", "").replace(")", "").replace("단위", "").replace(":", "").replace(" ", "")
     scale = unit_multiplier_to_million(unit_raw)
+
     allowed_metrics = {m.strip() for m in state["selected_metrics"]}
 
+    # 기간별 지표 병합
     for path, ext in state["llm_extraction_by_pdf"].items():
         for pk, metrics_dict in ext.items.items():
             if not re.match(r"^\d{4}Q[1-4]$", pk):
                 continue
-            merged_data.setdefault(pk, {})
+
+            if pk not in merged_data:
+                merged_data[pk] = {}
 
             for metric, value in metrics_dict.items():
                 if value is None:
                     continue
+
                 try:
-                    clean_metric = str(metric).strip()
+                    clean_metric = metric.strip()
+
+                    # 선택된 지표만 유지 
                     if clean_metric not in allowed_metrics:
                         continue
-                    clean_val = str(value).strip().replace(",", "").replace(" ", "")
+
+                    clean_val = str(value).strip()
+                    clean_val = clean_val.replace(",", "").replace(" ","")
+
                     if not clean_val:
                         continue
 
+                    # (100) -> -100
                     if clean_val.startswith("(") and clean_val.endswith(")"):
                         clean_val = "-" + clean_val[1:-1]
+                    # △100 -> -100
                     elif clean_val.startswith("△"):
                         clean_val = "-" + clean_val[1:]
+                    # 혹시 LLM이 -(100) 같이 줬을 경우
                     elif clean_val.startswith("-(") and clean_val.endswith(")"):
                         clean_val = "-" + clean_val[2:-1]
 
                     merged_data[pk][clean_metric] = float(clean_val) * scale
+
                 except Exception as e:
                     warnings.append(
                         f"[{os.path.basename(path)}] 값 변환 실패: pk={pk}, metric={metric}, value={value}, err={repr(e)}"
                     )
 
     periods = sort_period_keys(list(merged_data.keys()))
+
     pl_series = {}
     for m in state["selected_metrics"]:
         m_strip = m.strip()
-        pl_series[m_strip] = [merged_data.get(pk, {}).get(m_strip, math.nan) for pk in periods]
+        pl_series[m_strip] = [
+            merged_data.get(pk, {}).get(m_strip, math.nan)
+            for pk in periods
+        ]
 
-    fin = NormalizedFinancials(unit="백만원", periods=periods, pl=pl_series)
-    elapsed = (datetime.now() - started_at).total_seconds()
-    logger.info("[Pipeline] merge_normalize done: periods=%s metrics=%s elapsed=%.1fs", len(periods), len(pl_series), elapsed)
+    fin = NormalizedFinancials(
+        unit="백만원",
+        periods=periods,
+        pl=pl_series,
+    )
+
     return {**state, "fin": fin, "warnings": warnings}
 
-
 def node_compute_moves(state: FGState) -> FGState:
-    started_at = datetime.now()
-    logger.info("[Pipeline] compute_moves begin")
     fin = state["fin"]
     warnings = list(state.get("warnings") or [])
 
+    # 유효한 기간 데이터가 아예 없는 경우
     if not fin.periods:
-        warnings.append("추출된 유효한 기간 데이터가 없습니다.")
+        warnings.append("추출된 유효한 기간 데이터가 없습니다. (LLM의 형식 위반 또는 누적 데이터 오인 필터링)")
         return {
             **state,
             "now_period": "UNKNOWN",
             "ref_period": None,
             "ref_found": False,
             "top_moves": [],
-            "warnings": warnings,
+            "warnings": warnings
         }
-
     now_idx = len(fin.periods) - 1
     now_p = fin.periods[now_idx]
     ref_idx = pick_reference_index(fin.periods, now_idx, state["compare"])
     ref_p = fin.periods[ref_idx] if ref_idx is not None else None
 
-    top_moves: list[TopMove] = []
-    if ref_idx is not None and ref_p is not None:
+    top_moves = []
+    if ref_idx is not None:
         for metric, values in fin.pl.items():
             now, ref = values[now_idx], values[ref_idx]
-            if math.isnan(now) or math.isnan(ref):
-                continue
+            if math.isnan(now) or math.isnan(ref): continue
             d = now - ref
             pct = None if ref == 0 else d / ref
-            top_moves.append(
-                TopMove(
-                    metric=metric,
-                    now_period=now_p,
-                    ref_period=ref_p,
-                    now=now,
-                    ref=ref,
-                    delta=d,
-                    delta_pct=pct,
-                    flip_flag=(now >= 0 > ref) or (ref >= 0 > now),
-                )
-            )
+            top_moves.append(TopMove(metric=metric, now_period=now_p, ref_period=ref_p, now=now, ref=ref, delta=d, delta_pct=pct, flip_flag=(now >= 0 > ref) or (ref >= 0 > now)))
         top_moves.sort(key=lambda x: (abs(x.delta_pct or 0.0), abs(x.delta)), reverse=True)
 
-    result = {**state, "now_period": now_p, "ref_period": ref_p, "ref_found": ref_idx is not None, "top_moves": top_moves[: state["top_k"]]}
-    elapsed = (datetime.now() - started_at).total_seconds()
-    logger.info("[Pipeline] compute_moves done: top_moves=%s elapsed=%.1fs", len(result["top_moves"]), elapsed)
-    return result
+    return {**state, "now_period": now_p, "ref_period": ref_p, "ref_found": ref_idx is not None, "top_moves": top_moves[:state["top_k"]]}
+
 
 
 def node_optional_reasoning(state: FGState, reasoner: Optional[GrowthReasoner]) -> FGState:
