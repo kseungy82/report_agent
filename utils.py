@@ -9,6 +9,20 @@ from pypdf import PdfReader, PdfWriter
 
 logger = logging.getLogger(__name__)
 
+import math
+from pydantic import BaseModel
+
+def serialize_state(obj):
+    """FGState 내 Pydantic 객체 및 직렬화 불가 타입을 재귀적으로 변환"""
+    if isinstance(obj, BaseModel):
+        return obj.model_dump()
+    if isinstance(obj, dict):
+        return {k: serialize_state(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [serialize_state(i) for i in obj]
+    if isinstance(obj, float) and math.isnan(obj):
+        return None  # JSON은 NaN을 지원하지 않으므로 None으로 변환
+    return obj
 
 def sort_period_keys(keys: List[PeriodKey]) -> List[PeriodKey]:
     def kf(k: str) -> Tuple[int, int]:
