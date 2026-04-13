@@ -100,11 +100,10 @@ async def analyze(
         logging.info(text)
 
         return JSONResponse({
-            "route": routed["route"],
-            "report_text": routed["report_text"],
+            "report_text": text,
             "uploaded_pdf": input_path,
-            "effective_pdf": routed["effective_pdf"],
-            "state": serialize_state(routed["state"]),  # ← 여기도 동일하게
+            "effective_pdf": effective_pdf_path,
+            "state": serialize_state(state), 
             "log_file": log_path,
         })
     except Exception as e:
@@ -149,16 +148,14 @@ async def route(
         logging.info("\n" + "=" * 60)
         logging.info("\n[최종 생성된 분석 보고서]")
         logging.info(routed["report_text"])
-        return JSONResponse(
-            {
-                "route": routed["route"],
-                "report_text": routed["report_text"],
-                "uploaded_pdf": input_path,
-                "effective_pdf": routed["effective_pdf"],
-                "state": routed["state"],
-                "log_file": log_path,
-            }
-        )
+        return JSONResponse({
+            "route": routed["route"],
+            "report_text": routed["report_text"],
+            "uploaded_pdf": input_path,
+            "effective_pdf": routed["effective_pdf"],
+            "state": serialize_state(routed["state"]),  
+            "log_file": log_path,
+        })    
     except Exception as e:
         logger.exception("route failed")
         raise HTTPException(status_code=500, detail=str(e))
