@@ -1,5 +1,3 @@
-from setuptools import setup, find_packages
-
 from __future__ import annotations
 
 import os
@@ -19,7 +17,6 @@ def check_and_download_model():
 
     path = Path(model_path)
 
-    # 이미 다운로드된 경우 스킵
     if path.exists() and any(path.iterdir()):
         print(f"모델이 이미 존재합니다: {model_path}")
         return True
@@ -55,10 +52,3 @@ if __name__ == "__main__":
         print("\n모든 준비 완료. 서버를 시작할 수 있습니다.")
     else:
         print("\n준비가 완료되지 않았습니다. .env 파일을 확인하세요.")
-setup(
-    name="financial-sllm-agents",
-    version="0.1.0",
-    packages=find_packages(),
-    install_requires=[],
-    python_requires=">=3.10",
-)
