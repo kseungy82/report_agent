@@ -48,59 +48,56 @@ __all__ = [
 
 
 class UpstageDocumentParseClient:
-    def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or settings.upstage_api_key
+    def __init__(self):
+        self.api_key = os.environ.get("UPSTAGE_API_KEY")
         if not self.api_key:
-            raise ValueError("UPSTAGE_API_KEY is required. Put it in environment or .env.")
+            raise ValueError("UPSTAGE_API_KEY is required.")
         self.base_url = "https://api.upstage.ai/v1/document-digitization"
 
-    def parse(self, pdf_path: str, timeout: int = 600) -> dict:
+    def parse(self, pdf_path: str, timeout: int = 600) -> Dict[str, Any]:
+        url = self.base_url
         headers = {"Authorization": f"Bearer {self.api_key}"}
+
         data = {
             "model": "document-parse-260128",
             "ocr": "auto",
-            "chart_recognition": "true",
+            "chart_recognition": "true",  # requests 폼 전송을 위해 문자열로 처리
             "coordinates": "true",
             "output_formats": '["html"]',
             "base64_encoding": '["figure"]',
         }
-        logger.info("[Upstage] parse start: file=%s timeout=%ss", os.path.basename(pdf_path), timeout)
-        started_at = datetime.now()
+
         with open(pdf_path, "rb") as f:
             files = {"document": f}
-            try:
-                resp = requests.post(self.base_url, headers=headers, files=files, data=data, timeout=timeout)
-                elapsed = (datetime.now() - started_at).total_seconds()
-                logger.info("[Upstage] parse response: status=%s elapsed=%.1fs", resp.status_code, elapsed)
-                resp.raise_for_status()
-                payload = resp.json()
-                logger.info("[Upstage] parse success: keys=%s", list(payload.keys()))
-                return payload
-            except requests.Timeout:
-                elapsed = (datetime.now() - started_at).total_seconds()
-                logger.exception("[Upstage] parse timeout after %.1fs", elapsed)
-                raise
-            except requests.RequestException:
-                elapsed = (datetime.now() - started_at).total_seconds()
-                logger.exception("[Upstage] parse request failed after %.1fs", elapsed)
-                raise
+            resp = requests.post(url, headers=headers, files=files, data=data, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
 
 
 class LLMClient:
-    def __init__(self, model_id: str, use_cpu: bool = False):
+    def __init__(self, model_id: str, use_cpu: bool=False):
         self.device = "cpu" if use_cpu else ("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info("%s 로딩 중... device=%s", model_id, self.device)
+        logging.info(f"{model_id} 로딩 중... device={self.device}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_id,
             torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
+            trust_remote_code=True
         ).to(self.device)
         self.model.eval()
 
     def generate(self, system: str, user: str) -> str:
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ]
+
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
 
         with torch.no_grad():
@@ -110,19 +107,25 @@ class LLMClient:
                 do_sample=False,
                 repetition_penalty=1.15,
                 pad_token_id=self.tokenizer.eos_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=self.tokenizer.eos_token_id
             )
 
         input_length = inputs["input_ids"].shape[1]
         generated_tokens = outputs[0][input_length:]
         content = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+
+        # 모델이 혼자 사용자(<|user|>) 흉내를 내면 그 앞까지만 사용
         if "<|user|>" in content:
             content = content.split("<|user|>")[0].strip()
         if "<|assistant|>" in content:
             content = content.split("<|assistant|>")[0].strip()
+
         content = content.replace("```json", "").replace("```", "").strip()
-        start = content.find("{")
-        end = content.rfind("}") + 1
+
+        # 최종적으로 순수 JSON 괄호 { } 안의 내용만 추출
+        start = content.find('{')
+        end = content.rfind('}') + 1
+
         return content[start:end] if start != -1 and end > start else content
 
 
@@ -143,9 +146,13 @@ class MetricSelector:
             f"  [후보 지표 목록]: {candidates}\n"
             "3. 출력은 반드시 제공된 스키마와 일치하는 JSON 형태여야 하며, JSON 내부에 '//' 형태의 주석이나 부가 설명은 절대 포함하지 말 것.\n"
         )
-        user = f"DOCUMENT_BUNDLE:\n{json.dumps(doc_bundle, ensure_ascii=False, indent=2)}\n\nSCHEMA:\n{json.dumps(schema, ensure_ascii=False)}"
+        user = (
+            f"DOCUMENT_BUNDLE:\n{json.dumps(doc_bundle, ensure_ascii=False, indent=2)}\n\n"
+            f"SCHEMA:\n{json.dumps(schema, ensure_ascii=False)}"
+        )
         raw = self.llm.generate(system=system, user=user)
         return MetricSelectionOutput(**json.loads(raw)).selected_metrics
+
 
 
 class LLMTableExtractor:
@@ -153,10 +160,12 @@ class LLMTableExtractor:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def run(self, doc_bundle: dict, compare: str, selected_metrics: list[str]) -> LLMExtractionOutput:
-        from classes import LLMExtractionOutput
-        from utils import extract_financial_periods
-
+    def run(
+        self,
+        doc_bundle: Dict[str, Any],
+        compare: CompareMode,
+        selected_metrics: List[str]
+    ) -> LLMExtractionOutput:
         schema = LLMExtractionOutput.model_json_schema()
         now_date, now_key, now_term, ref_date, ref_key, ref_term = extract_financial_periods(doc_bundle)
         system = f"""
@@ -221,11 +230,14 @@ class GrowthReasoner:
         ]
         analysis_hints: list[str] = []
         for m in inp.top_moves:
-            pct_str = f"{m.delta_pct * 100:.1f}%" if m.delta_pct is not None else "n/a"
+            pct_str = f"{m.delta_pct*100:.1f}%" if m.delta_pct is not None else "n/a"
             table_rows.append(f"| {m.metric} | {m.ref:,.2f} | {m.now:,.2f} | {m.delta:,.2f} | {pct_str} |")
+
             status = "흑자전환" if m.flip_flag and m.now > 0 else ("적자/악화" if m.delta < 0 else "성장/개선")
             analysis_hints.append(f"- {m.metric}: {m.ref:,.0f} -> {m.now:,.0f} (변동: {m.delta:,.0f}, {pct_str}) [{status}]")
+
         perfect_markdown_table = "\n".join(table_rows)
+
         system = (
             "너는 기업 실적을 분석하는 10년차 재무 분석 전문가야. 모든 답변은 한국어로 작성해.\n"
             "제공된 문서를 바탕으로 아래 양식에 맞춰서 텍스트로만 답변해. 절대 JSON 형식({ })이나 표를 쓰지 마.\n\n"
