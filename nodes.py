@@ -24,8 +24,7 @@ from classes import (
     NormalizedFinancials,
     TopMove,
 )
-from utils import pick_reference_index, sort_period_keys, unit_multiplier_to_million
-
+from utils import sort_period_keys, pick_reference_index, unit_multiplier_to_million, get_quarter, extract_financial_periods, auto_slice_financials
 from config import settings
 
 logger = logging.getLogger(__name__)
