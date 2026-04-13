@@ -13,6 +13,7 @@ from config import settings
 from nodes import analyze_pdf
 from router import RouterAgent
 
+from utils import serialize_state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -98,15 +99,14 @@ async def analyze(
         logging.info("\n[최종 생성된 분석 보고서]")
         logging.info(text)
 
-        return JSONResponse(
-            {
-                "report_text": text,
-                "uploaded_pdf": input_path,
-                "effective_pdf": effective_pdf_path,
-                "state": state,
-                "log_file": log_path,
-            }
-        )
+        return JSONResponse({
+            "route": routed["route"],
+            "report_text": routed["report_text"],
+            "uploaded_pdf": input_path,
+            "effective_pdf": routed["effective_pdf"],
+            "state": serialize_state(routed["state"]),  # ← 여기도 동일하게
+            "log_file": log_path,
+        })
     except Exception as e:
         logger.exception("analyze failed")
         raise HTTPException(status_code=500, detail=str(e))
