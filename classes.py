@@ -4,7 +4,7 @@ from __future__ import annotations
 공통 스키마/타입 모음.
 """
 
-from typing import Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
 
 from pydantic import BaseModel, Field
 
