@@ -24,6 +24,7 @@ from classes import (
     NormalizedFinancials,
     TopMove,
     CompareMode,
+    ReportResult,
 )
 from utils import sort_period_keys, pick_reference_index, unit_multiplier_to_million, get_quarter, extract_financial_periods, auto_slice_financials
 from config import settings
@@ -644,7 +645,7 @@ def analyze_pdf(
     use_reasoning: bool = True,
     slice_financial_statement: bool = True,
     work_dir: str | None = None,
-):
+) -> ReportResult:
     from utils import auto_slice_financials
 
     bundle = get_model_bundle()
@@ -663,5 +664,17 @@ def analyze_pdf(
         top_k=top_k,
         use_reasoning=use_reasoning,
     )
-    return state, text, effective_pdf
+    return ReportResult(
+        report_text=text,
+        compare=state.get("compare", compare),
+        now_period=state.get("now_period", "UNKNOWN"),
+        ref_period=state.get("ref_period"),
+        unit=state["fin"].unit if state.get("fin") else "UNKNOWN",
+        selected_metrics=state.get("selected_metrics", []),
+        top_moves=state.get("top_moves", []),
+        llm_reasoning=state.get("llm_reasoning"),
+        source_pdf=pdf_path,
+        effective_pdf=effective_pdf,
+        warnings=state.get("warnings", []),
+    )
 
