@@ -172,14 +172,14 @@ async def route(
         logging.info("\n" + "=" * 60)
         logging.info("\n[최종 생성된 분석 보고서]")
         logging.info(routed["report_text"])
-        return JSONResponse({
+        return JSONResponse(sanitize({
             "route": routed["route"],
             "report_text": routed["report_text"],
             "uploaded_pdf": input_path,
             "effective_pdf": routed["effective_pdf"],
             "state": serialize_state(routed["state"]),  
             "log_file": log_path,
-        })    
+        }))    
     except Exception as e:
         logger.exception("route failed")
         raise HTTPException(status_code=500, detail=str(e))
