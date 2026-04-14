@@ -13,8 +13,6 @@ from config import settings
 from nodes import analyze_pdf
 from router import RouterAgent
 
-from utils import serialize_state
-
 import math
 from pydantic import BaseModel
 
@@ -64,27 +62,6 @@ def _persist_uploaded_pdf(upload, base_dir: str) -> str:
     save_path = os.path.join(runtime_dir, saved_name)
     return save_path
 
-def sanitize(obj):
-    # 1. Pydantic 모델인 경우 dict로 먼저 변환
-    if isinstance(obj, BaseModel):
-        obj = obj.model_dump() # 또는 .dict() (버전에 따라)
-
-    # 2. float 처리 (NaN, Inf 포함)
-    if isinstance(obj, float):
-        if math.isnan(obj) or math.isinf(obj):
-            return None
-        return obj
-
-    # 3. dict 순회
-    if isinstance(obj, dict):
-        return {k: sanitize(v) for k, v in obj.items()}
-
-    # 4. list/tuple 순회
-    if isinstance(obj, (list, tuple)):
-        return [sanitize(v) for v in obj]
-
-    return obj
-
 
 @app.get("/health")
 def health():
@@ -111,7 +88,7 @@ async def analyze(
         with open(input_path, "wb") as f:
             f.write(content)
 
-        state, text, effective_pdf_path = analyze_pdf(
+        result = analyze_pdf(
             pdf_path=input_path,
             compare=compare,
             top_k=int(top_k),
@@ -119,17 +96,12 @@ async def analyze(
             slice_financial_statement=bool(slice_financial_statement),
             work_dir=os.path.dirname(input_path),
         )
+
         logging.info("\n" + "=" * 60)
         logging.info("\n[최종 생성된 분석 보고서]")
-        logging.info(text)
+        logging.info(result.report_text)
 
-        return JSONResponse(sanitize({
-            "report_text": text,
-            "uploaded_pdf": input_path,
-            "effective_pdf": effective_pdf_path,
-            "state": serialize_state(state), 
-            "log_file": log_path,
-        }))
+        return JSONResponse(result.to_dict())
     except Exception as e:
         logger.exception("analyze failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -152,7 +124,6 @@ async def route(
         raise HTTPException(status_code=400, detail="Only .pdf files are supported.")
 
     try:
-        # 노트북과 동일하게 프로젝트 루트에 요청별 로그 파일 생성
         base_dir = os.getcwd()
         log_path = _configure_request_file_logging(base_dir)
         input_path = _persist_uploaded_pdf(pdf, base_dir)
@@ -160,7 +131,7 @@ async def route(
         with open(input_path, "wb") as f:
             f.write(content)
 
-        routed = router_agent.route(
+        result = router_agent.route(
             task=task,
             pdf_path=input_path,
             compare=compare,
@@ -171,15 +142,8 @@ async def route(
         )
         logging.info("\n" + "=" * 60)
         logging.info("\n[최종 생성된 분석 보고서]")
-        logging.info(routed["report_text"])
-        return JSONResponse(sanitize({
-            "route": routed["route"],
-            "report_text": routed["report_text"],
-            "uploaded_pdf": input_path,
-            "effective_pdf": routed["effective_pdf"],
-            "state": serialize_state(routed["state"]),  
-            "log_file": log_path,
-        }))    
+        logging.info(result.report_text)
+        return JSONResponse(result.to_dict())   
     except Exception as e:
         logger.exception("route failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -188,5 +152,4 @@ async def route(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=settings.app_port, reload=False)
-
+    uvicorn.run("main:app", host="0.0.0.0", port=settings.port_num, reload=False)
