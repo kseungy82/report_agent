@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal, TypedDict
 
 from nodes import analyze_pdf
+from classes import ReportResult
 
 
 RouteName = Literal["report", "unsupported"]
@@ -60,12 +61,7 @@ class RouterAgent:
             slice_financial_statement=slice_financial_statement,
             work_dir=work_dir,
         )
-        return {
-            "route": "report",
-            "report_text": text,
-            "state": state,
-            "effective_pdf": effective_pdf,
-        }
+        return result
 
     def route(
         self,
