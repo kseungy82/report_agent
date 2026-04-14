@@ -147,7 +147,7 @@ def auto_slice_financials(input_path: str, output_path: str) -> str:
         if not text:
             continue
         clean_text = text.replace(" ", "").replace("\n", "")
-        if "포괄손익계산서" in clean_text and "연결" not in clean_text:
+        if "포괄손익계산서" in clean_text and "연결" not in clean_text and "요약" not in clean_text:
             hit_count = sum(1 for k in metric_keywords if k in clean_text)
             if hit_count >= 2:
                 logger.info("(별도)포괄손익계산서 페이지 발견: %s", i)
