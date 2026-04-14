@@ -15,6 +15,9 @@ from router import RouterAgent
 
 from utils import serialize_state
 
+import math
+from pydantic import BaseModel
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,27 @@ def _persist_uploaded_pdf(upload, base_dir: str) -> str:
     save_path = os.path.join(runtime_dir, saved_name)
     return save_path
 
+def sanitize(obj):
+    # 1. Pydantic 모델인 경우 dict로 먼저 변환
+    if isinstance(obj, BaseModel):
+        obj = obj.model_dump() # 또는 .dict() (버전에 따라)
+
+    # 2. float 처리 (NaN, Inf 포함)
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+
+    # 3. dict 순회
+    if isinstance(obj, dict):
+        return {k: sanitize(v) for k, v in obj.items()}
+
+    # 4. list/tuple 순회
+    if isinstance(obj, (list, tuple)):
+        return [sanitize(v) for v in obj]
+
+    return obj
+
 
 @app.get("/health")
 def health():
@@ -99,13 +123,13 @@ async def analyze(
         logging.info("\n[최종 생성된 분석 보고서]")
         logging.info(text)
 
-        return JSONResponse({
+        return JSONResponse(sanitize({
             "report_text": text,
             "uploaded_pdf": input_path,
             "effective_pdf": effective_pdf_path,
             "state": serialize_state(state), 
             "log_file": log_path,
-        })
+        }))
     except Exception as e:
         logger.exception("analyze failed")
         raise HTTPException(status_code=500, detail=str(e))
