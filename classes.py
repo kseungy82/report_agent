@@ -91,6 +91,34 @@ class FGState(TypedDict, total=False):
     top_moves: List[TopMove]
     llm_reasoning: Optional[GrowthReasoningOutput]
     warnings: List[str]
+    
+class ReportResult(BaseModel):
+    #최종보고서
+    report_text: str
+
+    # 분석 메타 정보
+    compare: CompareMode
+    now_period: PeriodKey
+    ref_period: Optional[PeriodKey]
+    unit: Unit
+
+    # 핵심 지표 변동
+    selected_metrics: List[str]
+    top_moves: List[TopMove]
+
+    # LLM 서술 분석 (use_reasoning=True일 때만 채워짐)
+    llm_reasoning: Optional[GrowthReasoningOutput]
+
+    # 파일 경로
+    source_pdf: str        # 원본 업로드 PDF
+    effective_pdf: str     # 실제 분석에 사용된 PDF (슬라이싱 후)
+
+    # 경고/에러 로그
+    warnings: List[str]
+
+    def to_dict(self) -> dict:
+        """상위 에이전트가 JSON으로 바로 넘길 수 있도록 직렬화"""
+        return self.model_dump()
 
 __all__ = [
     "Unit",
@@ -104,5 +132,6 @@ __all__ = [
     "GrowthReasoningInput",
     "GrowthReasoningOutput",
     "FGState",
+    "ReportResult",
 ]
 
