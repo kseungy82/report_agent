@@ -443,6 +443,8 @@ def node_merge_and_normalize(state: FGState) -> FGState:
                     # 혹시 LLM이 -(100) 같이 줬을 경우
                     elif clean_val.startswith("-(") and clean_val.endswith(")"):
                         clean_val = "-" + clean_val[2:-1]
+                    elif clean_val.startswith("(-") and clean_val.endswith(")"):
+                        clean_val = "-" + clean_val[2:-1]
 
                     merged_data[pk][clean_metric] = float(clean_val) * scale
 
