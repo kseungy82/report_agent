@@ -142,7 +142,7 @@ class MetricSelector:
         schema = MetricSelectionOutput.model_json_schema()
         system = (
             "너는 10년차 재무 분석 전문가야.\n"
-            f"제공된 문서를 분석하여, 기업의 재무 건전성과 성장성을 가장 잘 보여주는 핵심 지표를 최소 5개 선정해.\n"
+            f"제공된 문서를 분석하여, 기업의 재무 건전성과 성장성을 가장 잘 보여주는 핵심 지표를 최소 10개 선정해.\n"
             "단, 아래의 조건을 엄격히 준수할 것:\n"
             "1. '포괄손익계산서'에 적혀있는 지표명 그대로 추출해. 괄호 있는 경우 괄호 안 글자까지 그대로 추출해.\n"
             "2. '포괄손익계산서'에 적힌 텍스트와 100% 일치하는 지표이면서, 동시에 다음 [후보 지표 목록]에 포함된 지표만 선택할 것.\n"
@@ -222,23 +222,83 @@ class LLMTableExtractor:
 class GrowthReasoner:
     def __init__(self, llm: LLMClient):
         self.llm = llm
+    
+    @staticmethod
+    def _classify_metrics_via_llm(llm: LLMClient, metrics: list[str]) -> dict[str, str]:
+        """
+        LLM이 지표명을 보고 비용/손익 항목 여부를 판단
+        반환: {"지표명": "cost" or "profit"}
+        """
+        system = (
+            "너는 10년차 재무 분석 전문가야.\n"
+            "아래 지표 목록을 보고 각 지표가 '비용 항목'인지 '손익 항목'인지 분류해.\n\n"
+            "[분류 기준]\n"
+            "- 비용 항목: 지출/차감을 나타내는 항목. 예) 매출원가, 판매비와관리비, 법인세비용, 감가상각비\n"
+            "- 손익 항목: 최종 이익/손실 결과를 나타내는 항목. 예) 영업이익, 당기순이익, 법인세비용차감전순이익\n\n"
+            "[출력 형식]\n"
+            "반드시 아래 형식으로만 출력. 다른 말 금지.\n"
+            "지표명::cost\n"
+            "지표명::profit\n"
+        )
+        user_content = "분류할 지표 목록:\n" + "\n".join(f"- {m}" for m in metrics)
+        raw = llm.generate(system=system, user=user_content)
+
+        result = {}
+        for line in raw.strip().split("\n"):
+            if "::" in line:
+                parts = line.strip().split("::")
+                if len(parts) == 2:
+                    metric, label = parts[0].strip(), parts[1].strip()
+                    result[metric] = label
+        #파싱 실패 항목은 기본값 'profit'으로 분류
+        for m in metrics:
+            if m not in result:
+                result[m] = "profit"
+
+        return result
 
     def run(self, inp: GrowthReasoningInput) -> GrowthReasoningOutput:
         now_p = inp.now_period
-        ref_p = inp.ref_period 
+        ref_p = inp.ref_period
         unit = inp.unit
+
+        # LLM으로 지표 분류 먼저 수행
+        metric_names = [m.metric for m in inp.top_moves]
+        metric_types = self._classify_metrics_via_llm(self.llm, metric_names)
+
         table_rows = [
             f"| 지표 | {ref_p} ({unit}) | {now_p} ({unit}) | 변동액 ({unit}) | 증감률 (%) |",
             "|---|---|---|---|---|",
         ]
+
         analysis_hints: list[str] = []
+
         for m in inp.top_moves:
             pct_str = f"{m.delta_pct*100:.1f}%" if m.delta_pct is not None else "n/a"
             table_rows.append(f"| {m.metric} | {m.ref:,.2f} | {m.now:,.2f} | {m.delta:,.2f} | {pct_str} |")
 
-            status = "흑자전환" if m.flip_flag and m.now > 0 else ("적자/악화" if m.delta < 0 else "성장/개선")
-            analysis_hints.append(f"- {m.metric}: {m.ref:,.0f} -> {m.now:,.0f} (변동: {m.delta:,.0f}, {pct_str}) [{status}]")
+            is_cost = metric_types.get(m.metric, "profit") == "cost"
 
+            if is_cost:
+                status = "비용증가" if m.delta < 0 else "비용감소"
+            else:
+                if m.flip_flag and m.now > 0:
+                    status = "흑자전환"
+                elif m.flip_flag and m.now <= 0:
+                    status = "적자전환"
+                elif m.now > 0 and m.delta < 0:
+                    status = "흑자유지(감소)"
+                elif m.now <= 0 and m.delta < 0:
+                    status = "적자심화"
+                elif m.now <= 0 and m.delta > 0:
+                    status = "적자유지(개선)"
+                else:
+                    status = "성장/개선"
+
+            analysis_hints.append(
+                f"- {m.metric}: {m.ref:,.0f} -> {m.now:,.0f} (변동: {m.delta:,.0f}, {pct_str}) [{status}]"
+            )
+    
         perfect_markdown_table = "\n".join(table_rows)
 
         system = (
@@ -254,7 +314,7 @@ class GrowthReasoner:
             "분석 내용 작성 시 괄호 안 글자는 고려하지 말고 분석. (예: '영업이익(손실)' -> '영업이익'으로 생각하고 분석)\n"
             "분석 시 퍼센트 언급 가능. 금액 언급 금지.\n"
             "제공된 지표 모두에 대해 아래와 같은 리스트 형식으로 금융 전문가 말투의 분석 요약 작성\n"
-            "- [해당 지표명]: (분석 내용 서술형으로 작성)\n"
+            "- [해당 지표명]: (분석 내용 서술형으로 작성. 단, 추측 금지, 오직 사실에 근거해 작성.)\n"
             "\n[특이사항]\n"
             "- (모든 지표 고려하여 우려되는 점이나 모니터링이 필요한 점을 금융전문가 말투로 작성. 단, 추측 금지, 오직 사실에 근거해 작성.)"
         )
